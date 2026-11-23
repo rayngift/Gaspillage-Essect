@@ -1,0 +1,362 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated CampusSave ESSECT user profile (student, merchant, or admin).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Display name shown in profile and orders."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 120,
+          "description": "Verified user email address (PII, restricted to owner and admin)."
+        },
+        "photoUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional avatar URL."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "merchant", "admin"],
+          "description": "User role within CampusSave."
+        },
+        "campus": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Campus identifier (e.g., ESSECT Montfleury)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "email", "role", "campus", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted administrator membership document.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "grantedAt"]
+    },
+    "Shop": {
+      "title": "Shop",
+      "description": "Partner restaurant, cafeteria, or bakery around ESSECT Montfleury.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Cafétéria", "Boulangerie", "Restaurant", "Pâtisserie"]
+        },
+        "address": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 160
+        },
+        "distanceMeters": {
+          "type": "number"
+        },
+        "angleDeg": {
+          "type": "number"
+        },
+        "pickupWindow": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "ownerId", "ownerName", "name", "category", "address", "distanceMeters", "angleDeg", "pickupWindow", "status", "createdAt", "updatedAt"]
+    },
+    "Offer": {
+      "title": "Offer",
+      "description": "Discounted surplus food offer or Surprise Basket published by an approved merchant.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "shopId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "shopName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "shopCategory": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40
+        },
+        "distanceMeters": {
+          "type": "number"
+        },
+        "merchantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 90
+        },
+        "description": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 260
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Surprise Basket", "Boulangerie", "Salades & Bowls", "Plats chauds", "Pâtisserie"]
+        },
+        "isSurpriseBasket": {
+          "type": "boolean"
+        },
+        "originalPrice": {
+          "type": "number"
+        },
+        "discountedPrice": {
+          "type": "number"
+        },
+        "quantityAvailable": {
+          "type": "integer"
+        },
+        "pickupWindow": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40
+        },
+        "imageUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "shopId", "shopName", "shopCategory", "distanceMeters", "merchantId", "title", "description", "category", "isSurpriseBasket", "originalPrice", "discountedPrice", "quantityAvailable", "pickupWindow", "imageUrl", "active", "createdAt", "updatedAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Student food rescue reservation paid via Konnect with QR pickup token.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "offerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "offerTitle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 90
+        },
+        "shopId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "shopName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "merchantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "studentEmail": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "quantity": {
+          "type": "integer"
+        },
+        "unitOriginalPrice": {
+          "type": "number"
+        },
+        "unitPaidPrice": {
+          "type": "number"
+        },
+        "totalOriginalTnd": {
+          "type": "number"
+        },
+        "totalPaidTnd": {
+          "type": "number"
+        },
+        "ecoPointsEarned": {
+          "type": "integer"
+        },
+        "pickupWindow": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["konnect_wallet", "konnect_card", "edinar_jeune"]
+        },
+        "paymentRef": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 60
+        },
+        "qrCodeValue": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 120
+        },
+        "status": {
+          "type": "string",
+          "enum": ["paid", "picked_up", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pickedUpAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "offerId", "offerTitle", "shopId", "shopName", "merchantId", "studentId", "studentName", "studentEmail", "quantity", "unitOriginalPrice", "unitPaidPrice", "totalOriginalTnd", "totalPaidTnd", "ecoPointsEarned", "pickupWindow", "paymentMethod", "paymentRef", "qrCodeValue", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles isolated to owner and admin."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Admin role grant records."
+    },
+    "/shops/{shopId}": {
+      "schema": { "$ref": "#/entities/Shop" },
+      "description": "Partner restaurants and cafeterias around ESSECT."
+    },
+    "/offers/{offerId}": {
+      "schema": { "$ref": "#/entities/Offer" },
+      "description": "Surplus food offers and Surprise Baskets (readable only when signed in)."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Student reservations with Konnect payment reference and QR pickup token."
+    }
+  }
+}

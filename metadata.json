@@ -1,0 +1,6 @@
+{
+  "name": "CampusSave ESSECT",
+  "description": "Plateforme solidaire anti-gaspillage pour les étudiants de l'ESSECT Montfleury : offres alimentaires à prix réduit, Campus Radar, paiement Konnect et QR Code.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

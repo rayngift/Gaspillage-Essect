@@ -1,0 +1,372 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Global Helpers
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSignedInVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isBootstrapAdmin() {
+      return isSignedInVerified() && request.auth.token.email == 'rayen19.chaaouri@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin() ||
+        (isSignedInVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    // =========================================================================
+    // Entity Validation Blueprints
+    // =========================================================================
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'role', 'campus', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoUrl', 'role', 'campus', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && data.role in ['student', 'merchant', 'admin']
+        && data.campus is string && data.campus.size() >= 2 && data.campus.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'grantedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'grantedAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && data.grantedAt is timestamp;
+    }
+
+    function isValidShop(data) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'ownerName', 'name', 'category', 'address',
+          'distanceMeters', 'angleDeg', 'pickupWindow', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'ownerName', 'name', 'category', 'address',
+          'distanceMeters', 'angleDeg', 'pickupWindow', 'status', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.ownerId)
+        && data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 80
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.category in ['Cafétéria', 'Boulangerie', 'Restaurant', 'Pâtisserie']
+        && data.address is string && data.address.size() >= 4 && data.address.size() <= 160
+        && data.distanceMeters is number && data.distanceMeters >= 10 && data.distanceMeters <= 2000
+        && data.angleDeg is number && data.angleDeg >= 0 && data.angleDeg <= 360
+        && data.pickupWindow is string && data.pickupWindow.size() >= 3 && data.pickupWindow.size() <= 40
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOffer(data) {
+      return data.keys().hasAll([
+          'id', 'shopId', 'shopName', 'shopCategory', 'distanceMeters', 'merchantId',
+          'title', 'description', 'category', 'isSurpriseBasket', 'originalPrice',
+          'discountedPrice', 'quantityAvailable', 'pickupWindow', 'imageUrl', 'active',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'shopId', 'shopName', 'shopCategory', 'distanceMeters', 'merchantId',
+          'title', 'description', 'category', 'isSurpriseBasket', 'originalPrice',
+          'discountedPrice', 'quantityAvailable', 'pickupWindow', 'imageUrl', 'active',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.shopId)
+        && data.shopName is string && data.shopName.size() >= 2 && data.shopName.size() <= 80
+        && data.shopCategory is string && data.shopCategory.size() >= 2 && data.shopCategory.size() <= 40
+        && data.distanceMeters is number && data.distanceMeters >= 10 && data.distanceMeters <= 2000
+        && isValidId(data.merchantId)
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 90
+        && data.description is string && data.description.size() >= 5 && data.description.size() <= 260
+        && data.category in ['Surprise Basket', 'Boulangerie', 'Salades & Bowls', 'Plats chauds', 'Pâtisserie']
+        && data.isSurpriseBasket is bool
+        && data.originalPrice is number && data.originalPrice > 0 && data.originalPrice <= 500
+        && data.discountedPrice is number && data.discountedPrice > 0 && data.discountedPrice < data.originalPrice
+        && data.quantityAvailable is int && data.quantityAvailable >= 0 && data.quantityAvailable <= 200
+        && data.pickupWindow is string && data.pickupWindow.size() >= 3 && data.pickupWindow.size() <= 40
+        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 500
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll([
+          'id', 'offerId', 'offerTitle', 'shopId', 'shopName', 'merchantId',
+          'studentId', 'studentName', 'studentEmail', 'quantity', 'unitOriginalPrice',
+          'unitPaidPrice', 'totalOriginalTnd', 'totalPaidTnd', 'ecoPointsEarned',
+          'pickupWindow', 'paymentMethod', 'paymentRef', 'qrCodeValue', 'status',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'offerId', 'offerTitle', 'shopId', 'shopName', 'merchantId',
+          'studentId', 'studentName', 'studentEmail', 'quantity', 'unitOriginalPrice',
+          'unitPaidPrice', 'totalOriginalTnd', 'totalPaidTnd', 'ecoPointsEarned',
+          'pickupWindow', 'paymentMethod', 'paymentRef', 'qrCodeValue', 'status',
+          'createdAt', 'updatedAt', 'pickedUpAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.offerId)
+        && data.offerTitle is string && data.offerTitle.size() >= 2 && data.offerTitle.size() <= 90
+        && isValidId(data.shopId)
+        && data.shopName is string && data.shopName.size() >= 2 && data.shopName.size() <= 80
+        && isValidId(data.merchantId)
+        && isValidId(data.studentId)
+        && data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 80
+        && data.studentEmail is string && data.studentEmail.size() >= 3 && data.studentEmail.size() <= 120
+        && data.quantity is int && data.quantity >= 1 && data.quantity <= 10
+        && data.unitOriginalPrice is number && data.unitOriginalPrice > 0 && data.unitOriginalPrice <= 500
+        && data.unitPaidPrice is number && data.unitPaidPrice > 0 && data.unitPaidPrice < data.unitOriginalPrice
+        && data.totalOriginalTnd is number && data.totalOriginalTnd > 0 && data.totalOriginalTnd <= 5000
+        && data.totalPaidTnd is number && data.totalPaidTnd > 0 && data.totalPaidTnd < data.totalOriginalTnd
+        && data.ecoPointsEarned is int && data.ecoPointsEarned == data.quantity * 25
+        && data.pickupWindow is string && data.pickupWindow.size() >= 3 && data.pickupWindow.size() <= 40
+        && data.paymentMethod in ['konnect_wallet', 'konnect_card', 'edinar_jeune']
+        && data.paymentRef is string && data.paymentRef.size() >= 4 && data.paymentRef.size() <= 60
+        && data.qrCodeValue is string && data.qrCodeValue.size() >= 6 && data.qrCodeValue.size() <= 120
+        && data.status in ['paid', 'picked_up', 'cancelled']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (!('pickedUpAt' in data) || data.pickedUpAt is timestamp);
+    }
+
+    // =========================================================================
+    // Collection Rules
+    // =========================================================================
+
+    // Test connection document
+    match /test/connection {
+      allow get: if isSignedIn();
+    }
+
+    // Users (PII isolated to owner or admin)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrapAdmin();
+      allow create: if isSignedInVerified()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (incoming().role == 'student' || isBootstrapAdmin());
+      allow update: if isSignedInVerified()
+        && isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoUrl', 'campus', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // Admins
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrapAdmin();
+      allow create, update: if isAdmin() && isValidId(userId) && isValidAdminRecord(incoming()) && incoming().uid == userId;
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // Shops (Readable only by signed-in users; pending shops restricted to owner/admin)
+    match /shops/{shopId} {
+      allow get: if isSignedIn() && isValidId(shopId) && (
+        existing().status == 'approved' ||
+        existing().ownerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.status == 'approved' ||
+        resource.data.ownerId == request.auth.uid ||
+        isBootstrapAdmin()
+      );
+      allow create: if isSignedInVerified()
+        && isValidId(shopId)
+        && isValidShop(incoming())
+        && incoming().id == shopId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (incoming().ownerId == request.auth.uid && incoming().status == 'pending')
+        );
+      allow update: if isSignedInVerified()
+        && isValidId(shopId)
+        && isValidShop(incoming())
+        && incoming().id == existing().id
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'category', 'address', 'distanceMeters', 'angleDeg', 'pickupWindow', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(shopId);
+    }
+
+    // Offers (Strictly hidden from unauthenticated users)
+    match /offers/{offerId} {
+      allow get: if isSignedIn() && isValidId(offerId) && (
+        existing().active == true ||
+        existing().merchantId == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.active == true ||
+        resource.data.merchantId == request.auth.uid ||
+        isBootstrapAdmin()
+      );
+      allow create: if isSignedInVerified()
+        && isValidId(offerId)
+        && isValidOffer(incoming())
+        && incoming().id == offerId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/shops/$(incoming().shopId))
+        && get(/databases/$(database)/documents/shops/$(incoming().shopId)).data.status == 'approved'
+        && (
+          isAdmin() ||
+          (
+            get(/databases/$(database)/documents/shops/$(incoming().shopId)).data.ownerId == request.auth.uid
+            && incoming().merchantId == request.auth.uid
+          )
+        );
+      allow update: if isSignedInVerified()
+        && isValidId(offerId)
+        && isValidOffer(incoming())
+        && incoming().id == existing().id
+        && incoming().shopId == existing().shopId
+        && incoming().merchantId == existing().merchantId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().merchantId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'description', 'category', 'isSurpriseBasket', 'originalPrice',
+              'discountedPrice', 'quantityAvailable', 'pickupWindow', 'imageUrl', 'active', 'updatedAt'
+            ])
+          ) ||
+          (
+            existing().active == true
+            && incoming().quantityAvailable < existing().quantityAvailable
+            && incoming().quantityAvailable >= 0
+            && incoming().diff(existing()).affectedKeys().hasOnly(['quantityAvailable', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(offerId) && (
+        (isSignedInVerified() && existing().merchantId == request.auth.uid) ||
+        isAdmin()
+      );
+    }
+
+    // Orders (Strictly isolated to student owner, merchant owner, or admin)
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId) && (
+        existing().studentId == request.auth.uid ||
+        existing().merchantId == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.studentId == request.auth.uid ||
+        resource.data.merchantId == request.auth.uid ||
+        isBootstrapAdmin()
+      );
+      allow create: if isSignedInVerified()
+        && isValidId(orderId)
+        && isValidOrder(incoming())
+        && incoming().id == orderId
+        && incoming().studentId == request.auth.uid
+        && incoming().status == 'paid'
+        && !('pickedUpAt' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/offers/$(incoming().offerId))
+        && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.active == true
+        && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.merchantId == incoming().merchantId
+        && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable >= incoming().quantity
+        && getAfter(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable
+           == get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable - incoming().quantity;
+      allow update: if isSignedInVerified()
+        && isValidId(orderId)
+        && isValidOrder(incoming())
+        && incoming().id == existing().id
+        && incoming().offerId == existing().offerId
+        && incoming().shopId == existing().shopId
+        && incoming().merchantId == existing().merchantId
+        && incoming().studentId == existing().studentId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().status == 'paid'
+            && (
+              (
+                existing().merchantId == request.auth.uid
+                && incoming().status == 'picked_up'
+                && incoming().pickedUpAt == request.time
+                && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'pickedUpAt'])
+              ) ||
+              (
+                (existing().studentId == request.auth.uid || existing().merchantId == request.auth.uid)
+                && incoming().status == 'cancelled'
+                && !('pickedUpAt' in incoming())
+                && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+              )
+            )
+          )
+        );
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+  }
+}
