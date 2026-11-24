@@ -2,3 +2,5 @@
 .env
 serviceAccountKey.json
 *.log
+*-firebase-adminsdk-*.json
+serviceAccount*.json
