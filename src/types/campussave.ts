@@ -15,7 +15,7 @@ export type PaymentMethod = 'konnect_wallet' | 'konnect_card' | 'edinar_jeune';
 
 export type OrderStatus = 'paid' | 'picked_up' | 'cancelled';
 
-export type ActiveView = 'portals' | 'offers' | 'radar' | 'orders' | 'merchant' | 'admin';
+export type ActiveView = 'portals' | 'offers' | 'radar' | 'orders' | 'impact' | 'merchant' | 'admin';
 
 export interface UserProfile {
   uid: string;
@@ -62,6 +62,7 @@ export interface Offer {
   active: boolean;
   createdAt?: unknown;
   updatedAt?: unknown;
+  _stockField?: string | null;
 }
 
 export interface Order {

@@ -1,13 +1,10 @@
 import { useState } from 'react';
-import { Check, Database, Shield, Users, X } from 'lucide-react';
-import type { User } from 'firebase/auth';
+import { Check, Shield, Users, X } from 'lucide-react';
 import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { seedEssectDemoData } from '../data/essectSeed';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import type { Offer, Order, Shop, UserProfile, UserRole } from '../types/campussave';
 
 interface AdminDashboardProps {
-  user: User;
   shops: Shop[];
   offers: Offer[];
   orders: Order[];
@@ -15,39 +12,19 @@ interface AdminDashboardProps {
 }
 
 export function AdminDashboard({
-  user,
   shops,
   offers,
   orders,
   usersList,
 }: AdminDashboardProps) {
-  const [seeding, setSeeding] = useState(false);
   const [adminMessage, setAdminMessage] = useState<string | null>(null);
 
   const pendingShops = shops.filter((s) => s.status === 'pending');
   const approvedShops = shops.filter((s) => s.status === 'approved');
   const validOrders = orders.filter((o) => o.status !== 'cancelled');
-  const totalMealsSaved = validOrders.reduce((acc, o) => acc + o.quantity, 0);
+  const totalMealsSaved = validOrders.reduce((acc, o) => acc + Number(o.quantity ?? 1), 0);
   const totalCo2Kg = Number((totalMealsSaved * 2.5).toFixed(1));
-  const totalVolumeTnd = validOrders.reduce((acc, o) => acc + o.totalPaidTnd, 0);
-
-  const handleSeedEssect = async () => {
-    setSeeding(true);
-    setAdminMessage(null);
-    try {
-      await seedEssectDemoData(
-        user.uid,
-        user.displayName || user.email?.split('@')[0] || 'Administrateur ESSECT'
-      );
-      setAdminMessage('Données ESSECT Montfleury synchronisées dans Firestore.');
-    } catch (err) {
-      setAdminMessage(
-        err instanceof Error ? err.message : 'Erreur lors de la synchronisation.'
-      );
-    } finally {
-      setSeeding(false);
-    }
-  };
+  const totalVolumeTnd = validOrders.reduce((acc, o) => acc + Number(o.totalPaidTnd ?? 0), 0);
 
   const handleShopDecision = async (shop: Shop, status: 'approved' | 'rejected') => {
     try {
@@ -96,16 +73,6 @@ export function AdminDashboard({
             Supervision de la plateforme
           </h2>
         </div>
-
-        <button
-          type="button"
-          disabled={seeding}
-          onClick={handleSeedEssect}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#166534] text-white text-sm font-medium rounded-lg hover:bg-[#14532d] disabled:opacity-60 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-        >
-          <Database className="w-4 h-4" />
-          <span>{seeding ? 'Synchronisation...' : 'Synchroniser données ESSECT'}</span>
-        </button>
       </div>
 
       {adminMessage && (

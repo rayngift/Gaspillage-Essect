@@ -44,6 +44,12 @@ service cloud.firestore {
         (isSignedInVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
     }
 
+    function isMerchant() {
+      return isSignedInVerified()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'merchant';
+    }
+
     // =========================================================================
     // Entity Validation Blueprints
     // =========================================================================
@@ -112,10 +118,10 @@ service cloud.firestore {
         && isValidId(data.merchantId)
         && data.title is string && data.title.size() >= 3 && data.title.size() <= 90
         && data.description is string && data.description.size() >= 5 && data.description.size() <= 260
-        && data.category in ['Surprise Basket', 'Boulangerie', 'Salades & Bowls', 'Plats chauds', 'Pâtisserie']
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
         && data.isSurpriseBasket is bool
         && data.originalPrice is number && data.originalPrice > 0 && data.originalPrice <= 500
-        && data.discountedPrice is number && data.discountedPrice > 0 && data.discountedPrice < data.originalPrice
+        && data.discountedPrice is number && data.discountedPrice > 0 && data.discountedPrice <= data.originalPrice
         && data.quantityAvailable is int && data.quantityAvailable >= 0 && data.quantityAvailable <= 200
         && data.pickupWindow is string && data.pickupWindow.size() >= 3 && data.pickupWindow.size() <= 40
         && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 500
@@ -150,9 +156,9 @@ service cloud.firestore {
         && data.studentEmail is string && data.studentEmail.size() >= 3 && data.studentEmail.size() <= 120
         && data.quantity is int && data.quantity >= 1 && data.quantity <= 10
         && data.unitOriginalPrice is number && data.unitOriginalPrice > 0 && data.unitOriginalPrice <= 500
-        && data.unitPaidPrice is number && data.unitPaidPrice > 0 && data.unitPaidPrice < data.unitOriginalPrice
+        && data.unitPaidPrice is number && data.unitPaidPrice > 0 && data.unitPaidPrice <= data.unitOriginalPrice
         && data.totalOriginalTnd is number && data.totalOriginalTnd > 0 && data.totalOriginalTnd <= 5000
-        && data.totalPaidTnd is number && data.totalPaidTnd > 0 && data.totalPaidTnd < data.totalOriginalTnd
+        && data.totalPaidTnd is number && data.totalPaidTnd > 0 && data.totalPaidTnd <= data.totalOriginalTnd
         && data.ecoPointsEarned is int && data.ecoPointsEarned == data.quantity * 25
         && data.pickupWindow is string && data.pickupWindow.size() >= 3 && data.pickupWindow.size() <= 40
         && data.paymentMethod in ['konnect_wallet', 'konnect_card', 'edinar_jeune']
@@ -210,17 +216,15 @@ service cloud.firestore {
       allow delete: if isAdmin() && isValidId(userId);
     }
 
-    // Shops (Readable only by signed-in users; pending shops restricted to owner/admin)
+    // Shops (Approved shops publicly readable for visitors; pending shops restricted to owner/admin)
     match /shops/{shopId} {
-      allow get: if isSignedIn() && isValidId(shopId) && (
+      allow get: if isValidId(shopId) && (
         existing().status == 'approved' ||
-        existing().ownerId == request.auth.uid ||
-        isAdmin()
+        (isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin()))
       );
-      allow list: if isSignedIn() && (
+      allow list: if (
         resource.data.status == 'approved' ||
-        resource.data.ownerId == request.auth.uid ||
-        isBootstrapAdmin()
+        (isSignedIn() && (resource.data.ownerId == request.auth.uid || isBootstrapAdmin()))
       );
       allow create: if isSignedInVerified()
         && isValidId(shopId)
@@ -230,7 +234,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           isAdmin() ||
-          (incoming().ownerId == request.auth.uid && incoming().status == 'pending')
+          (isMerchant() && incoming().ownerId == request.auth.uid && incoming().status == 'pending')
         );
       allow update: if isSignedInVerified()
         && isValidId(shopId)
@@ -242,7 +246,8 @@ service cloud.firestore {
         && (
           isAdmin() ||
           (
-            existing().ownerId == request.auth.uid
+            isMerchant()
+            && existing().ownerId == request.auth.uid
             && incoming().status == existing().status
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'name', 'category', 'address', 'distanceMeters', 'angleDeg', 'pickupWindow', 'updatedAt'
@@ -252,17 +257,15 @@ service cloud.firestore {
       allow delete: if isAdmin() && isValidId(shopId);
     }
 
-    // Offers (Strictly hidden from unauthenticated users)
+    // Offers (Active offers publicly readable for visitors; inactive offers restricted to owner/admin)
     match /offers/{offerId} {
-      allow get: if isSignedIn() && isValidId(offerId) && (
+      allow get: if isValidId(offerId) && (
         existing().active == true ||
-        existing().merchantId == request.auth.uid ||
-        isAdmin()
+        (isSignedIn() && (existing().merchantId == request.auth.uid || isAdmin()))
       );
-      allow list: if isSignedIn() && (
+      allow list: if (
         resource.data.active == true ||
-        resource.data.merchantId == request.auth.uid ||
-        isBootstrapAdmin()
+        (isSignedIn() && (resource.data.merchantId == request.auth.uid || isBootstrapAdmin()))
       );
       allow create: if isSignedInVerified()
         && isValidId(offerId)
@@ -275,36 +278,62 @@ service cloud.firestore {
         && (
           isAdmin() ||
           (
-            get(/databases/$(database)/documents/shops/$(incoming().shopId)).data.ownerId == request.auth.uid
+            isMerchant()
+            && get(/databases/$(database)/documents/shops/$(incoming().shopId)).data.ownerId == request.auth.uid
             && incoming().merchantId == request.auth.uid
           )
         );
       allow update: if isSignedInVerified()
         && isValidId(offerId)
-        && isValidOffer(incoming())
-        && incoming().id == existing().id
-        && incoming().shopId == existing().shopId
-        && incoming().merchantId == existing().merchantId
-        && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          isAdmin() ||
           (
-            existing().merchantId == request.auth.uid
-            && incoming().diff(existing()).affectedKeys().hasOnly([
-              'title', 'description', 'category', 'isSurpriseBasket', 'originalPrice',
-              'discountedPrice', 'quantityAvailable', 'pickupWindow', 'imageUrl', 'active', 'updatedAt'
-            ])
+            isValidOffer(incoming())
+            && incoming().id == existing().id
+            && incoming().shopId == existing().shopId
+            && incoming().merchantId == existing().merchantId
+            && incoming().createdAt == existing().createdAt
+            && (
+              isAdmin() ||
+              (
+                isMerchant()
+                && existing().merchantId == request.auth.uid
+                && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'title', 'description', 'category', 'isSurpriseBasket', 'originalPrice',
+                  'discountedPrice', 'quantityAvailable', 'pickupWindow', 'imageUrl', 'active', 'updatedAt'
+                ])
+              )
+            )
           ) ||
           (
             existing().active == true
-            && incoming().quantityAvailable < existing().quantityAvailable
-            && incoming().quantityAvailable >= 0
-            && incoming().diff(existing()).affectedKeys().hasOnly(['quantityAvailable', 'updatedAt'])
+            && (
+              (
+                ('quantityAvailable' in existing())
+                && incoming().quantityAvailable is int
+                && incoming().quantityAvailable < existing().quantityAvailable
+                && incoming().quantityAvailable >= 0
+                && incoming().diff(existing()).affectedKeys().hasOnly(['quantityAvailable', 'updatedAt'])
+              ) ||
+              (
+                ('quantity' in existing())
+                && incoming().quantity is int
+                && incoming().quantity < existing().quantity
+                && incoming().quantity >= 0
+                && incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'updatedAt'])
+              ) ||
+              (
+                ('stock' in existing())
+                && incoming().stock is int
+                && incoming().stock < existing().stock
+                && incoming().stock >= 0
+                && incoming().diff(existing()).affectedKeys().hasOnly(['stock', 'updatedAt'])
+              )
+            )
           )
         );
       allow delete: if isValidId(offerId) && (
-        (isSignedInVerified() && existing().merchantId == request.auth.uid) ||
+        (isMerchant() && existing().merchantId == request.auth.uid) ||
         isAdmin()
       );
     }
@@ -331,11 +360,39 @@ service cloud.firestore {
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/offers/$(incoming().offerId))
-        && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.active == true
-        && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.merchantId == incoming().merchantId
-        && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable >= incoming().quantity
-        && getAfter(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable
-           == get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable - incoming().quantity;
+        && (
+          !('active' in get(/databases/$(database)/documents/offers/$(incoming().offerId)).data) ||
+          get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.active == true
+        )
+        && (
+          !('merchantId' in get(/databases/$(database)/documents/offers/$(incoming().offerId)).data) ||
+          get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.merchantId == incoming().merchantId
+        )
+        && (
+          (
+            ('quantityAvailable' in get(/databases/$(database)/documents/offers/$(incoming().offerId)).data)
+            && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable >= incoming().quantity
+            && getAfter(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable
+               == get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantityAvailable - incoming().quantity
+          ) ||
+          (
+            ('quantity' in get(/databases/$(database)/documents/offers/$(incoming().offerId)).data)
+            && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantity >= incoming().quantity
+            && getAfter(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantity
+               == get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.quantity - incoming().quantity
+          ) ||
+          (
+            ('stock' in get(/databases/$(database)/documents/offers/$(incoming().offerId)).data)
+            && get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.stock >= incoming().quantity
+            && getAfter(/databases/$(database)/documents/offers/$(incoming().offerId)).data.stock
+               == get(/databases/$(database)/documents/offers/$(incoming().offerId)).data.stock - incoming().quantity
+          ) ||
+          (
+            !('quantityAvailable' in get(/databases/$(database)/documents/offers/$(incoming().offerId)).data)
+            && !('quantity' in get(/databases/$(database)/documents/offers/$(incoming().offerId)).data)
+            && !('stock' in get(/databases/$(database)/documents/offers/$(incoming().offerId)).data)
+          )
+        );
       allow update: if isSignedInVerified()
         && isValidId(orderId)
         && isValidOrder(incoming())
@@ -352,7 +409,8 @@ service cloud.firestore {
             existing().status == 'paid'
             && (
               (
-                existing().merchantId == request.auth.uid
+                isMerchant()
+                && existing().merchantId == request.auth.uid
                 && incoming().status == 'picked_up'
                 && incoming().pickedUpAt == request.time
                 && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'pickedUpAt'])

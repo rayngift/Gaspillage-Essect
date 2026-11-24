@@ -6,6 +6,7 @@ interface HeaderProps {
   activeView: ActiveView;
   onNavigate: (view: ActiveView) => void;
   user: User | null;
+  displayName?: string;
   isAdmin: boolean;
   isMerchant: boolean;
   activeOrderCount: number;
@@ -18,6 +19,7 @@ export function Header({
   activeView,
   onNavigate,
   user,
+  displayName,
   isAdmin,
   isMerchant,
   activeOrderCount,
@@ -28,28 +30,34 @@ export function Header({
   const navItems: {
     id: ActiveView;
     label: string;
-    requiresAuth?: boolean;
-    adminOnly?: boolean;
-    merchantOnly?: boolean;
+    visible: boolean;
   }[] = [
-    { id: 'portals', label: 'Espaces', requiresAuth: true },
-    { id: 'offers', label: 'Offres' },
-    { id: 'radar', label: 'Campus Radar' },
+    { id: 'portals', label: 'Espaces', visible: Boolean(user && isAdmin) },
+    { id: 'offers', label: 'Offres', visible: true },
+    { id: 'radar', label: 'Campus Radar', visible: true },
     {
       id: 'orders',
       label: activeOrderCount > 0 ? `Mes Commandes (${activeOrderCount})` : 'Mes Commandes',
-      requiresAuth: true,
+      visible: Boolean(user),
     },
-    { id: 'merchant', label: 'Commerçant', requiresAuth: true, merchantOnly: true },
-    { id: 'admin', label: 'Administration', requiresAuth: true, adminOnly: true },
+    {
+      id: 'impact',
+      label: 'Impact',
+      visible: Boolean(user),
+    },
+    {
+      id: 'merchant',
+      label: 'Commerçant',
+      visible: Boolean(user && (isMerchant || isAdmin)),
+    },
+    {
+      id: 'admin',
+      label: 'Administration',
+      visible: Boolean(user && isAdmin),
+    },
   ];
 
-  const visibleItems = navItems.filter((item) => {
-    if (item.adminOnly && !isAdmin) return false;
-    if (item.merchantOnly && !isMerchant) return false;
-    if (item.requiresAuth && !user) return false;
-    return true;
-  });
+  const visibleItems = navItems.filter((item) => item.visible);
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-neutral-200">
@@ -106,7 +114,7 @@ export function Header({
               <div className="hidden sm:flex items-center gap-2 text-sm text-neutral-700 max-w-[180px]">
                 <UserIcon className="w-4 h-4 text-[#166534] shrink-0" />
                 <span className="truncate font-medium">
-                  {user.displayName || user.email?.split('@')[0]}
+                  {displayName || user.displayName || user.email?.split('@')[0]}
                 </span>
               </div>
               <button

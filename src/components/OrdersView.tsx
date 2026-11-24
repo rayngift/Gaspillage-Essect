@@ -124,7 +124,7 @@ export function OrdersView({
                 className="bg-white border border-neutral-200 rounded-2xl p-6 flex flex-col sm:flex-row items-center gap-6"
               >
                 <div className="p-3 bg-white border border-neutral-200 rounded-xl shrink-0">
-                  <QRCodeSVG value={order.qrCodeValue} size={116} level="M" />
+                  <QRCodeSVG value={order.qrCodeValue || order.id} size={116} level="M" />
                 </div>
 
                 <div className="flex-1 min-w-0 space-y-2 w-full">
@@ -145,7 +145,7 @@ export function OrdersView({
                   <p className="text-xs text-neutral-600">
                     {order.shopName} · {order.quantity} panier{order.quantity > 1 ? 's' : ''} ·{' '}
                     <span className="font-mono tabular-nums font-semibold">
-                      {order.totalPaidTnd.toFixed(2)} TND
+                      {Number(order.totalPaidTnd ?? 0).toFixed(2)} TND
                     </span>
                   </p>
 
@@ -202,7 +202,7 @@ export function OrdersView({
                         {order.quantity}
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums font-semibold">
-                        {order.totalPaidTnd.toFixed(2)} TND
+                        {Number(order.totalPaidTnd ?? 0).toFixed(2)} TND
                       </td>
                       <td className="py-3 px-4">
                         {order.status === 'picked_up' ? (

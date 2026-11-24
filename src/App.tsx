@@ -17,12 +17,14 @@ import { AuthGateCard } from './components/AuthGateCard';
 import { CampusRadarView } from './components/CampusRadarView';
 import { Header } from './components/Header';
 import { HeroSection } from './components/HeroSection';
+import { ImpactView } from './components/ImpactView';
 import { MerchantPortal } from './components/MerchantPortal';
 import { OfferCard } from './components/OfferCard';
 import { OrdersView } from './components/OrdersView';
 import { ReservationModal } from './components/ReservationModal';
 import { RoleSelectorView } from './components/RoleSelectorView';
-import { seedEssectDemoData } from './data/essectSeed';
+import { isDemoOffer, isDemoShop, removeEssectDemoData } from './data/essectSeed';
+import { normalizeOffer } from './lib/offerNormalizer';
 import {
   ADMIN_BOOTSTRAP_EMAIL,
   auth,
@@ -78,15 +80,25 @@ export default function App() {
 
   // Reservation modal
   const [reserveTarget, setReserveTarget] = useState<Offer | null>(null);
+  const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState(false);
 
   const catalogRef = useRef<HTMLDivElement | null>(null);
   const autoSeededRef = useRef(false);
   const prevSignedInRef = useRef(false);
+  const pendingReserveOfferRef = useRef<Offer | null>(null);
 
   const isBootstrapAdmin =
     Boolean(user?.emailVerified) && user?.email === ADMIN_BOOTSTRAP_EMAIL;
   const isAdmin = isBootstrapAdmin || isAdminDoc || userProfile?.role === 'admin';
   const isMerchant = userProfile?.role === 'merchant';
+  const canAccessMerchant = isMerchant || isAdmin;
+  const canAccessOrders = Boolean(user);
+
+  useEffect(() => {
+    const onQuotaExceeded = () => setGmpQuotaExceeded(true);
+    window.addEventListener('gmp-quota-exceeded', onQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', onQuotaExceeded);
+  }, []);
 
   // 1. Auth state listener
   useEffect(() => {
@@ -112,7 +124,13 @@ export default function App() {
       }
 
       if (!wasSignedIn) {
-        setActiveView('portals');
+        if (pendingReserveOfferRef.current) {
+          setActiveView('offers');
+          setReserveTarget(pendingReserveOfferRef.current);
+          pendingReserveOfferRef.current = null;
+        } else {
+          setActiveView('portals');
+        }
       }
 
       try {
@@ -164,28 +182,62 @@ export default function App() {
     return () => unsub();
   }, [authReady, user, isBootstrapAdmin]);
 
-  // 3. Firestore live listeners (strictly gated behind authentication)
+  // 3. Firestore live listeners (public catalog for visitors + role-scoped queries when signed in)
   useEffect(() => {
-    if (!authReady || !user) return;
+    if (!authReady) return;
 
     setDataLoading(true);
     const unsubscribers: (() => void)[] = [];
+
+    if (!user) {
+      unsubscribers.push(
+        onSnapshot(
+          query(collection(db, 'shops'), where('status', '==', 'approved')),
+          (snap) => {
+            setShops(
+              snap.docs
+                .map((d) => ({ ...d.data(), id: d.id }) as Shop)
+                .filter((s) => !isDemoShop(s))
+            );
+            setDataLoading(false);
+          },
+          () => setDataLoading(false)
+        )
+      );
+
+      unsubscribers.push(
+        onSnapshot(
+          query(collection(db, 'offers'), where('active', '==', true)),
+          (snap) => {
+            setOffers(
+              snap.docs
+                .map((d) => normalizeOffer(d.data() as Record<string, unknown>, d.id))
+                .filter((o) => !isDemoOffer(o))
+            );
+            setDataLoading(false);
+          },
+          () => setDataLoading(false)
+        )
+      );
+
+      return () => {
+        for (const unsub of unsubscribers) unsub();
+      };
+    }
 
     if (isBootstrapAdmin) {
       unsubscribers.push(
         onSnapshot(
           collection(db, 'shops'),
           (snap) => {
-            const list = snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Shop);
-            setShops(list);
+            const rawList = snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Shop);
+            const hasDemoShops = rawList.some((s) => isDemoShop(s));
+            setShops(rawList.filter((s) => !isDemoShop(s)));
             setDataLoading(false);
-            if (list.length === 0 && !autoSeededRef.current) {
+            if (hasDemoShops && !autoSeededRef.current) {
               autoSeededRef.current = true;
-              seedEssectDemoData(
-                user.uid,
-                user.displayName || user.email?.split('@')[0] || 'Admin ESSECT'
-              ).catch((err) => {
-                console.error('Auto-seed error:', err);
+              removeEssectDemoData().catch((err) => {
+                console.error('Demo cleanup error:', err);
               });
             }
           },
@@ -197,7 +249,17 @@ export default function App() {
         onSnapshot(
           collection(db, 'offers'),
           (snap) => {
-            setOffers(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Offer));
+            const rawList = snap.docs.map((d) =>
+              normalizeOffer(d.data() as Record<string, unknown>, d.id)
+            );
+            const hasDemoOffers = rawList.some((o) => isDemoOffer(o));
+            setOffers(rawList.filter((o) => !isDemoOffer(o)));
+            if (hasDemoOffers && !autoSeededRef.current) {
+              autoSeededRef.current = true;
+              removeEssectDemoData().catch((err) => {
+                console.error('Demo cleanup error:', err);
+              });
+            }
           },
           (err) => handleFirestoreError(err, OperationType.LIST, 'offers')
         )
@@ -233,8 +295,12 @@ export default function App() {
       let ownedShops: Shop[] = [];
       const syncShops = () => {
         const merged = new Map<string, Shop>();
-        for (const s of approvedShops) merged.set(s.id, s);
-        for (const s of ownedShops) merged.set(s.id, s);
+        for (const s of approvedShops) {
+          if (!isDemoShop(s)) merged.set(s.id, s);
+        }
+        for (const s of ownedShops) {
+          if (!isDemoShop(s)) merged.set(s.id, s);
+        }
         setShops(Array.from(merged.values()));
         setDataLoading(false);
       };
@@ -265,8 +331,12 @@ export default function App() {
       let ownedOffers: Offer[] = [];
       const syncOffers = () => {
         const merged = new Map<string, Offer>();
-        for (const o of activeOffers) merged.set(o.id, o);
-        for (const o of ownedOffers) merged.set(o.id, o);
+        for (const o of activeOffers) {
+          if (!isDemoOffer(o)) merged.set(o.id, o);
+        }
+        for (const o of ownedOffers) {
+          if (!isDemoOffer(o)) merged.set(o.id, o);
+        }
         setOffers(Array.from(merged.values()));
       };
 
@@ -274,7 +344,9 @@ export default function App() {
         onSnapshot(
           query(collection(db, 'offers'), where('active', '==', true)),
           (snap) => {
-            activeOffers = snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Offer);
+            activeOffers = snap.docs.map((d) =>
+              normalizeOffer(d.data() as Record<string, unknown>, d.id)
+            );
             syncOffers();
           },
           (err) => handleFirestoreError(err, OperationType.LIST, 'offers')
@@ -285,7 +357,9 @@ export default function App() {
         onSnapshot(
           query(collection(db, 'offers'), where('merchantId', '==', user.uid)),
           (snap) => {
-            ownedOffers = snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Offer);
+            ownedOffers = snap.docs.map((d) =>
+              normalizeOffer(d.data() as Record<string, unknown>, d.id)
+            );
             syncOffers();
           },
           (err) => handleFirestoreError(err, OperationType.LIST, 'offers')
@@ -320,13 +394,21 @@ export default function App() {
     };
   }, [authReady, user, isBootstrapAdmin]);
 
-  const handleSignIn = async () => {
+  const handleSignIn = async (offerToReserve?: Offer) => {
     setAuthError(null);
     setAuthLoading(true);
+    pendingReserveOfferRef.current = offerToReserve ?? null;
     try {
       await signInWithPopup(auth, googleProvider);
-      setActiveView('portals');
+      if (pendingReserveOfferRef.current) {
+        setActiveView('offers');
+        setReserveTarget(pendingReserveOfferRef.current);
+        pendingReserveOfferRef.current = null;
+      } else {
+        setActiveView('portals');
+      }
     } catch (err) {
+      pendingReserveOfferRef.current = null;
       const msg =
         err instanceof Error ? err.message : 'La connexion Google a été interrompue.';
       setAuthError(msg);
@@ -348,15 +430,17 @@ export default function App() {
 
   const studentStats = useMemo(() => {
     const valid = myOrders.filter((o) => o.status !== 'cancelled');
-    const mealsSaved = valid.reduce((sum, o) => sum + o.quantity, 0);
+    const mealsSaved = valid.reduce((sum, o) => sum + Number(o.quantity ?? 1), 0);
     const co2SavedKg = mealsSaved * 2.5;
     const studentSavingsTnd = valid.reduce(
-      (sum, o) => sum + (o.totalOriginalTnd - o.totalPaidTnd),
+      (sum, o) =>
+        sum +
+        Math.max(0, Number(o.totalOriginalTnd ?? 0) - Number(o.totalPaidTnd ?? 0)),
       0
     );
     const ecoPoints = myOrders
       .filter((o) => o.status === 'picked_up')
-      .reduce((sum, o) => sum + o.ecoPointsEarned, 0);
+      .reduce((sum, o) => sum + Number(o.ecoPointsEarned ?? 25), 0);
 
     return { mealsSaved, co2SavedKg, studentSavingsTnd, ecoPoints };
   }, [myOrders]);
@@ -400,24 +484,48 @@ export default function App() {
 
   const selectedShopName = useMemo(() => {
     if (!selectedShopFilter) return null;
-    return shops.find((s) => s.id === selectedShopFilter)?.name ?? null;
-  }, [shops, selectedShopFilter]);
+    return (
+      shops.find((s) => s.id === selectedShopFilter)?.name ??
+      offers.find((o) => (o.shopId || o.shopName) === selectedShopFilter)?.shopName ??
+      null
+    );
+  }, [shops, offers, selectedShopFilter]);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8F9F8] text-neutral-900">
+      {gmpQuotaExceeded && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm">
+          <span>
+            Google Maps Platform quota reached. If you are the app owner, visit{' '}
+            <a
+              href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-semibold text-amber-950 hover:text-amber-800"
+            >
+              maps developer site
+            </a>{' '}
+            for instructions to update your account.
+          </span>
+        </div>
+      )}
+
       <Header
         activeView={activeView}
         onNavigate={(view) => {
-          if (view === 'merchant' && !isMerchant) return;
+          if (view === 'portals' && !isAdmin) return;
+          if (view === 'orders' && !canAccessOrders) return;
+          if (view === 'merchant' && !canAccessMerchant) return;
           if (view === 'admin' && !isAdmin) return;
           setActiveView(view);
         }}
         user={user}
+        displayName={userProfile?.displayName}
         isAdmin={isAdmin}
         isMerchant={isMerchant}
         activeOrderCount={activeOrders.length}
         authLoading={authLoading}
-        onSignIn={handleSignIn}
+        onSignIn={() => void handleSignIn()}
         onSignOut={handleSignOut}
       />
 
@@ -446,7 +554,8 @@ export default function App() {
             approvedShopsCount={shops.filter((s) => s.status === 'approved').length}
             offersCount={offers.filter((o) => o.active).length}
             onSelectPortal={(view) => {
-              if (view === 'merchant' && !isMerchant) return;
+              if (view === 'orders' && !canAccessOrders) return;
+              if (view === 'merchant' && !canAccessMerchant) return;
               if (view === 'admin' && !isAdmin) return;
               setActiveView(view);
             }}
@@ -458,6 +567,7 @@ export default function App() {
           <div className="space-y-10">
             <HeroSection
               isAuthenticated={Boolean(user)}
+              canOpenOrders={canAccessOrders}
               activeOrderCount={activeOrders.length}
               mealsSaved={studentStats.mealsSaved}
               co2SavedKg={studentStats.co2SavedKg}
@@ -466,20 +576,14 @@ export default function App() {
               onExploreOffers={() =>
                 catalogRef.current?.scrollIntoView({ behavior: 'smooth' })
               }
-              onOpenOrders={() => setActiveView('orders')}
-              onSignIn={handleSignIn}
+              onOpenOrders={() => {
+                if (canAccessOrders) setActiveView('orders');
+              }}
+              onSignIn={() => void handleSignIn()}
             />
 
             <div ref={catalogRef} className="space-y-5">
-              {!user ? (
-                <AuthGateCard
-                  title="Connectez-vous pour consulter les offres et réserver"
-                  description="Les paniers anti-gaspillage, tarifs étudiants et réservations QR Code autour de l'ESSECT Montfleury sont exclusivement accessibles après connexion."
-                  loading={authLoading}
-                  onSignIn={handleSignIn}
-                />
-              ) : (
-                <>
+              <>
                   {/* Catalog Header + Search & Price Filters */}
                   <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
                     <div>
@@ -589,13 +693,18 @@ export default function App() {
                         <OfferCard
                           key={offer.id}
                           offer={offer}
-                          onReserve={(selected) => setReserveTarget(selected)}
+                          onReserve={(selected) => {
+                            if (!user) {
+                              void handleSignIn(selected);
+                              return;
+                            }
+                            setReserveTarget(selected);
+                          }}
                         />
                       ))}
                     </div>
                   )}
                 </>
-              )}
             </div>
           </div>
         )}
@@ -607,7 +716,7 @@ export default function App() {
               title="Connectez-vous pour explorer le Campus Radar"
               description="Localisez les cafétérias, boulangeries et restaurants partenaires autour de l'ESSECT Montfleury et consultez leurs paniers disponibles après connexion."
               loading={authLoading}
-              onSignIn={handleSignIn}
+              onSignIn={() => void handleSignIn()}
             />
           ) : (
             <CampusRadarView
@@ -620,24 +729,56 @@ export default function App() {
             />
           ))}
 
-        {/* Student Orders & Impact View */}
+        {/* Orders & Impact View (Admin Full Access) */}
         {activeView === 'orders' && user && (
-          <OrdersView
+          canAccessOrders ? (
+            <OrdersView
+              orders={myOrders}
+              mealsSaved={studentStats.mealsSaved}
+              co2SavedKg={studentStats.co2SavedKg}
+              studentSavingsTnd={studentStats.studentSavingsTnd}
+              ecoPoints={studentStats.ecoPoints}
+              onBrowseOffers={() => setActiveView('offers')}
+            />
+          ) : (
+            <div className="bg-white border border-neutral-200 rounded-2xl p-8 max-w-xl mx-auto text-center space-y-4">
+              <h2 className="text-xl font-bold text-neutral-900">
+                Accès réservé aux administrateurs
+              </h2>
+              <p className="text-sm text-neutral-600">
+                Votre profil donne accès aux Offres et au Campus Radar.
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveView('offers')}
+                className="px-4 py-2 bg-[#166534] text-white text-sm font-medium rounded-lg hover:bg-[#14532d] cursor-pointer"
+              >
+                Retour aux offres
+              </button>
+            </div>
+          )
+        )}
+
+        {/* Student & Member Impact + Profile Panel */}
+        {activeView === 'impact' && user && (
+          <ImpactView
+            user={user}
+            userProfile={userProfile}
             orders={myOrders}
             mealsSaved={studentStats.mealsSaved}
             co2SavedKg={studentStats.co2SavedKg}
             studentSavingsTnd={studentStats.studentSavingsTnd}
             ecoPoints={studentStats.ecoPoints}
-            onBrowseOffers={() => setActiveView('offers')}
+            onSignOut={handleSignOut}
           />
         )}
 
-        {/* Merchant Portal (Strictly Merchant Only) */}
+        {/* Merchant Portal (Merchant and Admin Full Access) */}
         {activeView === 'merchant' && user && (
-          isMerchant ? (
+          canAccessMerchant ? (
             <MerchantPortal
               user={user}
-              isAdmin={false}
+              isAdmin={isAdmin}
               myShops={myShops}
               myOffers={myMerchantOffers}
               merchantOrders={merchantOrders}
@@ -648,14 +789,14 @@ export default function App() {
                 Accès réservé aux commerçants
               </h2>
               <p className="text-sm text-neutral-600">
-                Seuls les comptes ayant le rôle Commerçant peuvent accéder à l’espace de gestion des commerces et offres.
+                Seuls les comptes ayant le rôle Commerçant ou Administrateur peuvent accéder à l’espace de gestion des commerces et offres.
               </p>
               <button
                 type="button"
-                onClick={() => setActiveView('portals')}
+                onClick={() => setActiveView('offers')}
                 className="px-4 py-2 bg-[#166534] text-white text-sm font-medium rounded-lg hover:bg-[#14532d] cursor-pointer"
               >
-                Retour aux espaces
+                Retour aux offres
               </button>
             </div>
           )
@@ -665,7 +806,6 @@ export default function App() {
         {activeView === 'admin' && user && (
           isAdmin ? (
             <AdminDashboard
-              user={user}
               shops={shops}
               offers={offers}
               orders={allOrders}
@@ -702,10 +842,11 @@ export default function App() {
         <ReservationModal
           offer={reserveTarget}
           user={user}
+          canOpenOrders={canAccessOrders}
           onClose={() => setReserveTarget(null)}
           onSuccessGoOrders={() => {
             setReserveTarget(null);
-            setActiveView('orders');
+            if (canAccessOrders) setActiveView('orders');
           }}
         />
       )}

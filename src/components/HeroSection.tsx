@@ -4,7 +4,11 @@ import { GENERATED_IMAGES } from '../data/essectSeed';
 
 interface HeroSectionProps {
   isAuthenticated: boolean;
+  canOpenOrders?: boolean;
   activeOrderCount: number;
+  approvedShopsCount: number;
+  activeOffersCount: number;
+  avgDiscountPct: number;
   mealsSaved: number;
   co2SavedKg: number;
   studentSavingsTnd: number;
@@ -16,14 +20,17 @@ interface HeroSectionProps {
 
 export function HeroSection({
   isAuthenticated,
+  canOpenOrders = false,
   activeOrderCount,
+  approvedShopsCount,
+  activeOffersCount,
+  avgDiscountPct,
   mealsSaved,
   co2SavedKg,
   studentSavingsTnd,
   ecoPoints,
   onExploreOffers,
   onOpenOrders,
-  onSignIn,
 }: HeroSectionProps) {
   const [heroImgFailed, setHeroImgFailed] = useState(false);
 
@@ -35,9 +42,19 @@ export function HeroSection({
         { label: 'Mes EcoPoints', value: `${ecoPoints} pts`, accent: true },
       ]
     : [
-        { label: 'Commerces ESSECT', value: '4 partenaires' },
-        { label: 'Réduction moyenne', value: '-62%' },
-        { label: 'Bonus par retrait', value: '+25 pts', accent: true },
+        {
+          label: 'Commerces partenaires',
+          value: `${approvedShopsCount} partenaire${approvedShopsCount > 1 ? 's' : ''}`,
+        },
+        {
+          label: 'Offres actives',
+          value: `${activeOffersCount} disponible${activeOffersCount > 1 ? 's' : ''}`,
+        },
+        {
+          label: 'Réduction moyenne',
+          value: avgDiscountPct > 0 ? `-${avgDiscountPct}%` : '—',
+          accent: true,
+        },
         { label: 'Paiement sécurisé', value: 'Konnect & QR' },
       ];
 
@@ -67,22 +84,24 @@ export function HeroSection({
                 >
                   Explorer les offres
                 </button>
-                <button
-                  type="button"
-                  onClick={onOpenOrders}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-neutral-100 text-neutral-800 text-sm font-medium rounded-lg border border-neutral-200 hover:bg-neutral-200/70 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#166534]"
-                >
-                  <QrCode className="w-4 h-4 text-[#166534]" />
-                  <span>Mes commandes QR ({activeOrderCount})</span>
-                </button>
+                {canOpenOrders && (
+                  <button
+                    type="button"
+                    onClick={onOpenOrders}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-neutral-100 text-neutral-800 text-sm font-medium rounded-lg border border-neutral-200 hover:bg-neutral-200/70 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#166534]"
+                  >
+                    <QrCode className="w-4 h-4 text-[#166534]" />
+                    <span>Mes commandes QR ({activeOrderCount})</span>
+                  </button>
+                )}
               </>
             ) : (
               <button
                 type="button"
-                onClick={onSignIn}
+                onClick={onExploreOffers}
                 className="px-5 py-2.5 bg-[#166534] text-white text-sm font-medium rounded-lg hover:bg-[#14532d] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#166534]"
               >
-                Se connecter pour voir les offres
+                Explorer les offres
               </button>
             )}
           </div>
@@ -92,7 +111,7 @@ export function HeroSection({
           {!heroImgFailed ? (
             <img
               src={GENERATED_IMAGES.hero}
-              alt="Paniers repas anti-gaspillage et viennoiseries sur le campus ESSECT"
+              alt="Cour du campus ESSECT Montfleury à Tunis"
               referrerPolicy="no-referrer"
               onError={() => setHeroImgFailed(true)}
               className="w-full h-full object-cover"

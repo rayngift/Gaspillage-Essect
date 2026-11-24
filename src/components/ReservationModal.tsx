@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { CheckCircle2, CreditCard, Minus, Plus, QrCode, ShieldCheck, Wallet, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { doc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { doc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import type { Offer, Order, PaymentMethod } from '../types/campussave';
@@ -9,6 +9,7 @@ import type { Offer, Order, PaymentMethod } from '../types/campussave';
 interface ReservationModalProps {
   offer: Offer;
   user: User;
+  canOpenOrders?: boolean;
   onClose: () => void;
   onSuccessGoOrders: () => void;
 }
@@ -16,10 +17,16 @@ interface ReservationModalProps {
 export function ReservationModal({
   offer,
   user,
+  canOpenOrders = false,
   onClose,
   onSuccessGoOrders,
 }: ReservationModalProps) {
-  const maxQty = Math.min(5, Math.max(1, offer.quantityAvailable));
+  const unitDiscounted = Math.max(0.01, Number(offer.discountedPrice) || 0);
+  const unitOriginal =
+    Number(offer.originalPrice) > unitDiscounted
+      ? Number(offer.originalPrice)
+      : unitDiscounted;
+  const maxQty = Math.min(5, Math.max(1, Number(offer.quantityAvailable) || 1));
   const [quantity, setQuantity] = useState<number>(1);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('konnect_wallet');
   const [step, setStep] = useState<'summary' | 'konnect' | 'confirmed'>('summary');
@@ -28,21 +35,22 @@ export function ReservationModal({
   const [paymentRef, setPaymentRef] = useState<string>('');
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
 
-  const totalPaid = Number((offer.discountedPrice * quantity).toFixed(2));
-  const totalOriginal = Number((offer.originalPrice * quantity).toFixed(2));
-  const savings = Number((totalOriginal - totalPaid).toFixed(2));
+  const totalPaid = Number((unitDiscounted * quantity).toFixed(2));
+  const totalOriginal = Number((unitOriginal * quantity).toFixed(2));
+  const savings = Number(Math.max(0, totalOriginal - totalPaid).toFixed(2));
   const ecoPoints = Math.round(quantity * 25);
 
   const handleInitKonnect = async () => {
     setErrorMsg(null);
     setSubmitting(true);
     try {
+      const safeTitle = (offer.title || 'Offre CampusSave').slice(0, 120);
       const res = await fetch('/api/konnect/init-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           offerId: offer.id,
-          offerTitle: offer.title,
+          offerTitle: safeTitle,
           amountTnd: totalPaid,
           paymentMethod,
         }),
@@ -77,53 +85,95 @@ export function ReservationModal({
       const orderId = `ord_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const qrCodeValue = `CS-ESSECT-${orderId.slice(4, 14).toUpperCase()}`;
 
+      const rawShopName = (offer.shopName || 'Commerce ESSECT').trim();
+      const safeShopName = (rawShopName.length >= 2 ? rawShopName : 'Commerce ESSECT').slice(0, 80);
+      const rawShopId = (offer.shopId || safeShopName).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const safeShopId = (rawShopId.length >= 1 ? rawShopId : 'shop_essect').slice(0, 128);
+      const rawMerchantId = (offer.merchantId || safeShopId || user.uid).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const safeMerchantId = (rawMerchantId.length >= 1 ? rawMerchantId : user.uid).slice(0, 128);
+      const rawPickup = (offer.pickupWindow || '').trim();
+      const safePickup = (rawPickup.length >= 3 ? rawPickup : 'Aujourd’hui').slice(0, 40);
+      const rawTitle = (offer.title || '').trim();
+      const safeOfferTitle = (rawTitle.length >= 2 ? rawTitle : 'Offre CampusSave').slice(0, 90);
+
       const orderPayload: Omit<Order, 'createdAt' | 'updatedAt'> = {
         id: orderId,
         offerId: offer.id,
-        offerTitle: offer.title.slice(0, 90),
-        shopId: offer.shopId,
-        shopName: offer.shopName.slice(0, 80),
-        merchantId: offer.merchantId,
+        offerTitle: safeOfferTitle,
+        shopId: safeShopId,
+        shopName: safeShopName,
+        merchantId: safeMerchantId,
         studentId: user.uid,
         studentName: (user.displayName || user.email?.split('@')[0] || 'Étudiant ESSECT').slice(0, 80),
         studentEmail: (user.email || 'etudiant@essect.tn').slice(0, 120),
         quantity: Math.round(quantity),
-        unitOriginalPrice: Number(offer.originalPrice.toFixed(2)),
-        unitPaidPrice: Number(offer.discountedPrice.toFixed(2)),
+        unitOriginalPrice: Number(unitOriginal.toFixed(2)),
+        unitPaidPrice: Number(unitDiscounted.toFixed(2)),
         totalOriginalTnd: totalOriginal,
         totalPaidTnd: totalPaid,
         ecoPointsEarned: ecoPoints,
-        pickupWindow: offer.pickupWindow,
+        pickupWindow: safePickup,
         paymentMethod,
         paymentRef,
         qrCodeValue,
         status: 'paid',
       };
 
+      const stockField = offer._stockField;
+      const nextStock = Math.max(0, Math.round((Number(offer.quantityAvailable) || 0) - quantity));
+      const orderRef = doc(db, 'orders', orderId);
+
       try {
-        const batch = writeBatch(db);
-        const offerRef = doc(db, 'offers', offer.id);
-        const orderRef = doc(db, 'orders', orderId);
-
-        batch.update(offerRef, {
-          quantityAvailable: Math.round(offer.quantityAvailable - quantity),
-          updatedAt: serverTimestamp(),
-        });
-        batch.set(orderRef, {
-          ...orderPayload,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        await batch.commit();
+        if (stockField) {
+          const batch = writeBatch(db);
+          const offerRef = doc(db, 'offers', offer.id);
+          batch.update(offerRef, {
+            [stockField]: nextStock,
+            updatedAt: serverTimestamp(),
+          });
+          batch.set(orderRef, {
+            ...orderPayload,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          await batch.commit();
+        } else {
+          await setDoc(orderRef, {
+            ...orderPayload,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
       } catch (fsErr) {
-        handleFirestoreError(fsErr, OperationType.WRITE, `orders/${orderId}`);
+        const msg = fsErr instanceof Error ? fsErr.message : String(fsErr);
+        if (stockField && /permission|insufficient/i.test(msg)) {
+          try {
+            await setDoc(orderRef, {
+              ...orderPayload,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          } catch (fallbackErr) {
+            handleFirestoreError(fallbackErr, OperationType.WRITE, `orders/${orderId}`);
+          }
+        } else {
+          handleFirestoreError(fsErr, OperationType.WRITE, `orders/${orderId}`);
+        }
       }
 
       setCreatedOrder(orderPayload);
       setStep('confirmed');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Erreur lors de la confirmation.');
+      let friendly = 'Erreur lors de la confirmation.';
+      if (err instanceof Error) {
+        try {
+          const parsed = JSON.parse(err.message) as { error?: string };
+          friendly = parsed.error || err.message;
+        } catch {
+          friendly = err.message;
+        }
+      }
+      setErrorMsg(friendly);
     } finally {
       setSubmitting(false);
     }
@@ -176,11 +226,13 @@ export function ReservationModal({
                 </div>
                 <div className="text-right">
                   <p className="text-base font-bold font-mono tabular-nums text-[#166534]">
-                    {offer.discountedPrice.toFixed(2)} TND
+                    {unitDiscounted.toFixed(2)} TND
                   </p>
-                  <p className="text-xs font-mono tabular-nums text-neutral-400 line-through">
-                    {offer.originalPrice.toFixed(2)} TND
-                  </p>
+                  {unitOriginal > unitDiscounted && (
+                    <p className="text-xs font-mono tabular-nums text-neutral-400 line-through">
+                      {unitOriginal.toFixed(2)} TND
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -358,14 +410,16 @@ export function ReservationModal({
                 >
                   Fermer
                 </button>
-                <button
-                  type="button"
-                  onClick={onSuccessGoOrders}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#166534] text-white text-sm font-medium rounded-lg hover:bg-[#14532d] transition-colors cursor-pointer"
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span>Voir mes commandes</span>
-                </button>
+                {canOpenOrders && (
+                  <button
+                    type="button"
+                    onClick={onSuccessGoOrders}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#166534] text-white text-sm font-medium rounded-lg hover:bg-[#14532d] transition-colors cursor-pointer"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    <span>Voir mes commandes</span>
+                  </button>
+                )}
               </div>
             </div>
           )}

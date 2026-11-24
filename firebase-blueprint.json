@@ -186,7 +186,8 @@
         },
         "category": {
           "type": "string",
-          "enum": ["Surprise Basket", "Boulangerie", "Salades & Bowls", "Plats chauds", "Pâtisserie"]
+          "minLength": 1,
+          "maxLength": 40
         },
         "isSurpriseBasket": {
           "type": "boolean"

@@ -3,7 +3,7 @@
   "appId": "1:837359093912:web:9074ee7090ff541162a8ed",
   "apiKey": "AIzaSyDCVxoH-_sIUAhKvm9vaFOOEP-nGAXnD_Y",
   "authDomain": "campussave-31fcd.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-d2e593d1-47c2-4725-8bc3-b8eadd88878d",
+  "firestoreDatabaseId": "(default)",
   "storageBucket": "campussave-31fcd.firebasestorage.app",
   "messagingSenderId": "837359093912",
   "measurementId": "",

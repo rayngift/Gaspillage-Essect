@@ -23,6 +23,160 @@ interface KonnectSession {
 
 const konnectSessions = new Map<string, KonnectSession>();
 
+interface GeocodeResultPayload {
+  lat: number;
+  lng: number;
+  formattedAddress: string;
+  placeId?: string;
+}
+
+const geocodeCache = new Map<
+  string,
+  { value: GeocodeResultPayload | null; expiresAt: number }
+>();
+
+function getGoogleMapsKey(): string {
+  return (
+    process.env.GOOGLE_MAPS_API_KEY ||
+    process.env.VITE_GOOGLE_MAPS_API_KEY ||
+    ''
+  ).trim();
+}
+
+function normalizeTunisAddress(raw: string): string {
+  const cleaned = raw.trim().slice(0, 200);
+  if (/(tunis|tunisie|tunisia)/i.test(cleaned)) {
+    return cleaned;
+  }
+  return `${cleaned}, Tunis, Tunisia`;
+}
+
+async function geocodeSingleAddress(
+  rawAddress: string,
+  apiKey: string
+): Promise<{ result: GeocodeResultPayload | null; quotaExceeded?: boolean }> {
+  const queryAddress = normalizeTunisAddress(rawAddress);
+  const cacheKey = queryAddress.toLowerCase();
+  const cached = geocodeCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { result: cached.value };
+  }
+
+  // Primary: Geocoding API v4
+  const encodedAddr = encodeURIComponent(queryAddress);
+  const v4Url =
+    `https://geocode.googleapis.com/v4/geocode/address/${encodedAddr}` +
+    `?regionCode=tn&languageCode=fr` +
+    `&locationBias.rectangle.low.latitude=36.73` +
+    `&locationBias.rectangle.low.longitude=10.10` +
+    `&locationBias.rectangle.high.latitude=36.86` +
+    `&locationBias.rectangle.high.longitude=10.26`;
+
+  try {
+    const v4Res = await fetch(v4Url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': 'results.placeId,results.location,results.formattedAddress',
+        'X-Goog-Maps-Solution-ID': 'gmp_mcp_codeassist_v1_aistudio',
+      },
+    });
+
+    if (v4Res.status === 429) {
+      return { result: null, quotaExceeded: true };
+    }
+
+    if (v4Res.ok) {
+      const v4Data = (await v4Res.json()) as {
+        results?: Array<{
+          placeId?: string;
+          formattedAddress?: string;
+          location?: { latitude?: number; longitude?: number };
+        }>;
+        error?: { status?: string };
+      };
+      if (v4Data.error?.status === 'RESOURCE_EXHAUSTED') {
+        return { result: null, quotaExceeded: true };
+      }
+      const first = v4Data.results?.[0];
+      if (
+        first?.location &&
+        typeof first.location.latitude === 'number' &&
+        typeof first.location.longitude === 'number'
+      ) {
+        const value: GeocodeResultPayload = {
+          lat: first.location.latitude,
+          lng: first.location.longitude,
+          formattedAddress: first.formattedAddress || rawAddress,
+          placeId: first.placeId,
+        };
+        geocodeCache.set(cacheKey, {
+          value,
+          expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        });
+        return { result: value };
+      }
+    } else {
+      const errBody = (await v4Res.json().catch(() => null)) as {
+        error?: { status?: string };
+      } | null;
+      if (errBody?.error?.status === 'RESOURCE_EXHAUSTED') {
+        return { result: null, quotaExceeded: true };
+      }
+    }
+  } catch {
+    // Fall through to standard Geocoding endpoint
+  }
+
+  // Fallback: Standard Geocoding REST endpoint
+  try {
+    const legacyUrl =
+      `https://maps.googleapis.com/maps/api/geocode/json` +
+      `?address=${encodeURIComponent(queryAddress)}` +
+      `&region=tn&language=fr&bounds=36.73,10.10|36.86,10.26` +
+      `&key=${encodeURIComponent(apiKey)}`;
+    const res = await fetch(legacyUrl);
+    if (res.status === 429) {
+      return { result: null, quotaExceeded: true };
+    }
+    const data = (await res.json()) as {
+      status?: string;
+      results?: Array<{
+        place_id?: string;
+        formatted_address?: string;
+        geometry?: { location?: { lat?: number; lng?: number } };
+      }>;
+    };
+    if (data.status === 'OVER_QUERY_LIMIT') {
+      return { result: null, quotaExceeded: true };
+    }
+    const first = data.results?.[0];
+    const loc = first?.geometry?.location;
+    if (loc && typeof loc.lat === 'number' && typeof loc.lng === 'number') {
+      const value: GeocodeResultPayload = {
+        lat: loc.lat,
+        lng: loc.lng,
+        formattedAddress: first?.formatted_address || rawAddress,
+        placeId: first?.place_id,
+      };
+      geocodeCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      });
+      return { result: value };
+    }
+  } catch {
+    // Return null below
+  }
+
+  if (geocodeCache.size > 500) {
+    const oldest = geocodeCache.keys().next().value;
+    if (oldest) geocodeCache.delete(oldest);
+  }
+  return { result: null };
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '64kb' }));
@@ -32,8 +186,55 @@ async function startServer() {
       status: 'ok',
       service: 'CampusSave ESSECT REST API',
       konnectMode: process.env.KONNECT_API_KEY ? 'live-sandbox' : 'local-test-mode',
+      mapsConfigured: Boolean(getGoogleMapsKey()),
       timestamp: new Date().toISOString(),
     });
+  });
+
+  app.get('/api/maps/config', (_req: Request, res: Response) => {
+    const apiKey = getGoogleMapsKey();
+    res.json({ apiKey });
+  });
+
+  app.post('/api/maps/geocode', async (req: Request, res: Response) => {
+    const apiKey = getGoogleMapsKey();
+    if (!apiKey) {
+      res.status(503).json({
+        error: { status: 'UNAVAILABLE', message: 'Google Maps API key not configured.' },
+      });
+      return;
+    }
+
+    const body = req.body as Record<string, unknown> | undefined;
+    const rawItems = body && Array.isArray(body.addresses) ? body.addresses : null;
+    if (!rawItems || rawItems.length === 0 || rawItems.length > 50) {
+      res.status(400).json({ error: 'Liste d’adresses invalide (1 à 50 éléments).' });
+      return;
+    }
+
+    const results: Record<string, GeocodeResultPayload | null> = {};
+
+    for (const item of rawItems) {
+      if (!item || typeof item !== 'object') continue;
+      const obj = item as Record<string, unknown>;
+      const id = typeof obj.id === 'string' ? obj.id.trim().slice(0, 128) : '';
+      const address = typeof obj.address === 'string' ? obj.address.trim().slice(0, 200) : '';
+      if (!id || address.length < 2) continue;
+
+      const geo = await geocodeSingleAddress(address, apiKey);
+      if (geo.quotaExceeded) {
+        res.status(429).json({
+          error: {
+            status: 'RESOURCE_EXHAUSTED',
+            message: 'Quota Google Maps Platform dépassé.',
+          },
+        });
+        return;
+      }
+      results[id] = geo.result;
+    }
+
+    res.json({ results });
   });
 
   app.post('/api/konnect/init-payment', async (req: Request, res: Response) => {
